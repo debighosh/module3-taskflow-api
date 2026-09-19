@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TaskFlow - Task Management Dashboard</title>
+    <!-- Bootstrap 5 CSS CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+    <div class="container py-5">
+        <header class="text-center mb-5">
+            <h1 class="fw-bold text-primary">TaskFlow Dashboard</h1>
+            <p class="text-muted">Spring Boot REST API + Interactive Frontend</p>
+        </header>
+
+        <div class="row">
+            <!-- Form to Create Task -->
+            <div class="col-md-4 mb-4">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-primary text-white py-3">
+                        <h5 class="card-title mb-0">Create New Task</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="taskForm">
+                            <div class="mb-3">
+                                <label for="title" class="form-label fw-semibold">Title *</label>
+                                <input type="text" class="form-control" id="title" placeholder="e.g., Complete Module 3" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="description" class="form-label fw-semibold">Description</label>
+                                <textarea class="form-control" id="description" rows="2" placeholder="e.g., Finish assignment"></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="priority" class="form-label fw-semibold">Priority</label>
+                                <select class="form-select" id="priority">
+                                    <option value="LOW">LOW</option>
+                                    <option value="MEDIUM" selected>MEDIUM</option>
+                                    <option value="HIGH">HIGH</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="dueDate" class="form-label fw-semibold">Due Date</label>
+                                <input type="date" class="form-control" id="dueDate">
+                            </div>
+                            <div class="mb-3">
+                                <label for="completed" class="form-label fw-semibold">Completed</label>
+                                <select class="form-select" id="completed">
+                                    <option value="false" selected>False</option>
+                                    <option value="true">True</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100 py-2">Add Task</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Task List Display -->
+            <div class="col-md-8">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center py-3">
+                        <h5 class="card-title mb-0">Task List</h5>
+                        <button class="btn btn-outline-light btn-sm" onclick="loadTasks()">Refresh Tasks</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <input type="search" id="searchInput" class="form-control" placeholder="Search tasks by title...">
+                        </div>
+                        <div id="taskList" class="list-group">
+                            <!-- Tasks will load here dynamically -->
+                            <p class="text-muted text-center py-4">Loading tasks...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Details Modal -->
+    <div class="modal fade" id="taskDetailModal" tabindex="-1" aria-labelledby="taskDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="taskDetailModalLabel">Task Details (GET /api/tasks/{id})</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>ID:</strong> <span id="modalId"></span></p>
+                    <p><strong>Title:</strong> <span id="modalTitle"></span></p>
+                    <p><strong>Description:</strong> <span id="modalDescription"></span></p>
+                    <p><strong>Priority:</strong> <span id="modalPriority" class="badge"></span></p>
+                    <p><strong>Due Date:</strong> <span id="modalDueDate"></span></p>
+                    <p><strong>Completed:</strong> <span id="modalCompleted"></span></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Created Task Modal -->
+    <div class="modal fade" id="taskCreatedModal" tabindex="-1" aria-labelledby="taskCreatedModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="taskCreatedModalLabel">Task Created (POST /api/tasks)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>ID:</strong> <span id="createdModalId"></span></p>
+                    <p><strong>Title:</strong> <span id="createdModalTitle"></span></p>
+                    <p><strong>Description:</strong> <span id="createdModalDescription"></span></p>
+                    <p><strong>Priority:</strong> <span id="createdModalPriority" class="badge"></span></p>
+                    <p><strong>Due Date:</strong> <span id="createdModalDueDate"></span></p>
+                    <p><strong>Completed:</strong> <span id="createdModalCompleted"></span></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- JavaScript for API Integration -->
+    <script>
+        const API_URL = '/api/tasks';
+        let allTasks = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('searchInput').addEventListener('input', filterTasks);
+            loadTasks();
+        });
+
+        async function loadTasks() {
+            try {
+                const response = await fetch(API_URL);
+                allTasks = await response.json();
+                filterTasks();
+            } catch (error) {
+                console.error('Error loading tasks:', error);
+                document.getElementById('taskList').innerHTML = '<p class="text-danger text-center">Failed to connect to backend API.</p>';
+            }
+        }
+
+        function displayTasks(tasks) {
+            const taskListDiv = document.getElementById('taskList');
+
+            if (tasks.length === 0) {
+                const hasSearchQuery = document.getElementById('searchInput').value.trim().length > 0;
+                taskListDiv.innerHTML = hasSearchQuery
+                    ? '<p class="text-muted text-center py-4">No tasks match your search.</p>'
+                    : '<p class="text-muted text-center py-4">No tasks found. Create one using the form on the left!</p>';
+                return;
+            }
+
+            taskListDiv.innerHTML = '';
+            tasks.forEach(task => {
+                let badgeColor = 'bg-secondary';
+                if (task.priority === 'HIGH') badgeColor = 'bg-danger';
+                else if (task.priority === 'MEDIUM') badgeColor = 'bg-warning text-dark';
+
+                const item = document.createElement('a');
+                item.href = '#';
+                item.className = 'list-group-item list-group-item-action flex-column align-items-start mb-2 border rounded shadow-sm';
+                item.onclick = () => fetchTaskById(task.id);
+                
+                item.innerHTML = `
+                    <div class="d-flex w-100 justify-content-between align-items-center">
+                        <h5 class="mb-1 text-primary fw-bold">${task.title}</h5>
+                        <small class="badge ${badgeColor}">${task.priority || 'NORMAL'}</small>
+                    </div>
+                    <p class="mb-1 text-secondary text-truncate" style="max-width: 500px;">${task.description || 'No description provided'}</p>
+                    <small class="text-muted">Due: ${task.dueDate || 'None'} &bull; Completed: ${task.completed ? 'True' : 'False'} &bull; Click to view details via API</small>
+                `;
+                taskListDiv.appendChild(item);
+            });
+        }
+
+        // Search/Filter helper
+        function filterTasks() {
+            const query = document.getElementById('searchInput').value.trim().toLowerCase();
+            const filtered = allTasks.filter(task => task.title?.toLowerCase().includes(query));
+            displayTasks(filtered);
+        }
+
+        // REQUIRED ENDPOINT TESTER: GET /api/tasks/{id}
+        async function fetchTaskById(id) {
+            try {
+                const response = await fetch(`${API_URL}/${id}`);
+                if (!response.ok) throw new Error('Task not found');
+                const task = await response.json();
+
+                // Populate modal fields
+                document.getElementById('modalId').innerText = task.id;
+                document.getElementById('modalTitle').innerText = task.title;
+                document.getElementById('modalDescription').innerText = task.description || 'None';
+                
+                const priorityBadge = document.getElementById('modalPriority');
+                priorityBadge.innerText = task.priority || 'NORMAL';
+                priorityBadge.className = 'badge ' + (task.priority === 'HIGH' ? 'bg-danger' : task.priority === 'MEDIUM' ? 'bg-warning text-dark' : 'bg-secondary');
+
+                document.getElementById('modalDueDate').innerText = task.dueDate || 'None';
+                document.getElementById('modalCompleted').innerText = task.completed ? 'True' : 'False';
+
+                // Show Bootstrap Modal
+                const modal = new bootstrap.Modal(document.getElementById('taskDetailModal'));
+                modal.show();
+            } catch (error) {
+                alert('Could not fetch task details for ID: ' + id);
+            }
+        }
+
+        // Handle form submission (POST /api/tasks)
+        document.getElementById('taskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const newTask = {
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                priority: document.getElementById('priority').value,
+                dueDate: document.getElementById('dueDate').value || null,
+                completed: document.getElementById('completed').value === 'true'
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(newTask)
+                });
+
+                if (response.ok) {
+                    const createdTask = await response.json();
+
+                    document.getElementById('createdModalId').innerText = createdTask.id;
+                    document.getElementById('createdModalTitle').innerText = createdTask.title;
+                    document.getElementById('createdModalDescription').innerText = createdTask.description || 'None';
+
+                    const createdPriorityBadge = document.getElementById('createdModalPriority');
+                    createdPriorityBadge.innerText = createdTask.priority || 'NORMAL';
+                    createdPriorityBadge.className = 'badge ' + (createdTask.priority === 'HIGH' ? 'bg-danger' : createdTask.priority === 'MEDIUM' ? 'bg-warning text-dark' : 'bg-secondary');
+
+                    document.getElementById('createdModalDueDate').innerText = createdTask.dueDate || 'None';
+                    document.getElementById('createdModalCompleted').innerText = createdTask.completed ? 'True' : 'False';
+
+                    document.getElementById('taskForm').reset();
+                    loadTasks(); // Refresh list automatically
+
+                    const modal = new bootstrap.Modal(document.getElementById('taskCreatedModal'));
+                    modal.show();
+                } else {
+                    alert('Failed to create task');
+                }
+            } catch (error) {
+                console.error('Error creating task:', error);
+                alert('Error connecting to server.');
+            }
+        });
+    </script>
+</body>
+</html>
