@@ -1,0 +1,19 @@
+# Keep the build context to the files the Dockerfile copies.
+.git
+.github
+.circleci
+.idea
+.vscode
+*.iml
+*.iws
+*.ipr
+.DS_Store
+target
+reports
+*.md
+docs
+HELP.md
+VERSION
+.env
+.env.*
+*.pem
