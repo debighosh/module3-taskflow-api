@@ -8,7 +8,7 @@ Docker image, CircleCI pipeline, and Railway notes for Module 4. Stretch goals c
 
 `README.md` is left for the submission write-up. Use this file to run the tools, then summarise the pipeline URL, Docker Hub tags, and scan results in the README.
 
-The Maven `pom.xml` version stays `0.0.1-SNAPSHOT`. Image tags do not follow that number. `pom.xml` and `src/` are owned by the concurrent backend change and are not edited here.
+The Maven `pom.xml` version stays `0.0.1-SNAPSHOT`. Image tags do not follow that number. `pom.xml` and `src/` are changed in [PR #2](https://github.com/debighosh/module3-taskflow-api/pull/2) and are not edited here.
 
 ## Build and run locally
 
@@ -27,13 +27,13 @@ curl http://localhost:8080/api/tasks
 
 The container listens on port 8080. Stop it with `docker stop` on the container id from `docker ps`.
 
-A local run uses the default Spring profile and the in-memory H2 database. It does not need Postgres or `SPRING_PROFILES_ACTIVE`. If the backend does not seed tasks yet, the curl response is a JSON array and may be `[]`.
+A local run uses the default Spring profile and the in-memory H2 database. It does not need Postgres or `SPRING_PROFILES_ACTIVE`. On this branch the task list may be `[]`. After PR #2, a fresh database includes six sample tasks.
 
 The Dockerfile is the assignment's multi-stage build, with three small changes:
 
 - Maven dependencies are downloaded in their own layer before `src/` is copied, and Maven runs with `-B` so the build does not prompt. Railway still compiles the JAR inside the image, because `target/` is not in git.
 - The runtime image records `APP_VERSION` as an OCI label. CircleCI passes the release version. Railway can omit it; the label then stays `unversioned`.
-- The JRE process runs as the non-root user `taskflow`. It still binds to port 8080.
+- The JRE process runs as the non-root user `taskflow`. With `PORT` unset it listens on 8080. After PR #2 the app uses `PORT` when Railway sets it, and still falls back to 8080.
 
 The base images are unchanged: `maven:3.9-eclipse-temurin-21` to build, `eclipse-temurin:21-jre-alpine` to run.
 
@@ -54,9 +54,22 @@ The repository name comes from `DOCKERHUB_USERNAME` plus `/taskflow-api`. With t
 ### Cut the next version
 
 1. Publish `1.0.0` by merging to `main` with the Docker Hub variables set. That push tags `1.0.0`, `sha-<commit>`, and `latest`.
-2. Edit `VERSION` to the next number, for example `1.1.0`. Commit and push to `main`.
+2. Edit `VERSION` to the next number and push that commit to `main`.
 
-The `1.0.0` tag stays on Docker Hub. `latest` and `1.1.0` point at the new image. The previous `sha-...` tag still identifies the old build. Use `1.0.1` instead of `1.1.0` for a fix, or `2.0.0` for a breaking API change.
+The previous semver tag stays on Docker Hub. `latest` and the new semver tag point at the new image. The previous `sha-...` tag still identifies the old build. Use a patch bump for a fix, a minor bump for a compatible change, or a major bump for a breaking API change.
+
+### Recommended release order
+
+Use this order so Docker Hub keeps two versions and the scan artifacts are a before/after pair for stretch goal 5.
+
+1. Add the CircleCI Docker Hub variables before anything is merged to `main`.
+2. Merge [PR #1](https://github.com/debighosh/module3-taskflow-api/pull/1) first. That `main` push publishes `1.0.0`, `sha-<commit>`, and `latest` from Spring Boot 3.2.2. Download the Dependency-Check HTML report and `trivy-image.txt` from that run. Those artifacts are the baseline scan.
+3. Update [PR #2](https://github.com/debighosh/module3-taskflow-api/pull/2) with `main`, set `VERSION` to `1.1.0` on that branch, then merge it. PR #2 upgrades Spring Boot to 3.5.16. That `main` push publishes `1.1.0`, `sha-<commit>`, and `latest`.
+4. Compare the `1.1.0` scan artifacts with the `1.0.0` artifacts in the submission README.
+
+`VERSION` has to be `1.1.0` in the commit that merges PR #2. A merge that still contains `1.0.0` publishes `1.0.0` again and replaces the Spring Boot 3.2.2 image on that tag. The earlier `sha-` tag would still point at the baseline build.
+
+Deploy to Railway after PR #2 is on `main`. That release is the one that listens on Railway's `PORT`.
 
 Optional git tag, if you also want the version visible on GitHub:
 
@@ -130,23 +143,26 @@ To fail the build later, lower `--failOnCVSS` or drop `--exit-code 0` and pass `
 Deploy the service from this GitHub repository. Railway detects the Dockerfile in the root and builds it. `target/` is not in git; the image build runs Maven.
 
 1. Create a project at [railway.app](https://railway.app) and choose **Deploy from GitHub repo**.
-2. Select this repository.
-3. When the deployment is up, open the service → **Settings → Networking → Generate Domain**.
-4. Set the public port to **8080**.
-5. Check `https://<your-domain>/api/tasks`.
+2. Select this repository. Deploy after PR #2 is on `main`, so the service includes the prod profile and `PORT` binding.
+3. Add a Postgres database in the same project.
+4. On the API service, set the variables below. For `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`, use Railway's variable reference to the Postgres service (the same values the Postgres plugin injects).
+5. When the deployment is up, open the service → **Settings → Networking → Generate Domain**.
+6. Check `https://<your-domain>/api/tasks`.
 
-This path is separate from CircleCI. CircleCI publishes to Docker Hub. Railway rebuilds from GitHub. The assignment's deploy path is the GitHub Dockerfile, not the Docker Hub image.
+The app honours `PORT` and falls back to 8080. Railway sets `PORT`. Point the public domain at that same port. Local `docker run -p 8080:8080` leaves `PORT` unset, so the process listens on 8080.
 
-Local Docker and CI do not set a Spring profile. Production variables belong on the Railway service. The concurrent backend change makes production read the variables below. Confirm the exact names, and any additions, against that pull request before you rely on this list:
+CircleCI publishes to Docker Hub. Railway rebuilds from GitHub when `main` changes. The assignment deploy path is this Dockerfile.
+
+Local Docker and CI stay on the default profile and H2. Production settings belong on the Railway service. [PR #2](https://github.com/debighosh/module3-taskflow-api/pull/2) reads these variables from `application-prod.properties` and `application.properties`:
 
 | Variable | What to set |
 | --- | --- |
 | `SPRING_PROFILES_ACTIVE` | `prod` |
-| `ALLOWED_ORIGINS` | The Netlify origin allowed by CORS, for example `https://<site>.netlify.app` |
-| `PGHOST` | Railway Postgres host |
-| `PGPORT` | Railway Postgres port |
-| `PGDATABASE` | Database name |
-| `PGUSER` | Database user |
-| `PGPASSWORD` | Database password |
+| `ALLOWED_ORIGINS` | The Netlify origin, for example `https://your-site.netlify.app`. Separate extra origins with commas. |
+| `PGHOST` | Reference from the Railway Postgres service |
+| `PGPORT` | Reference from the Railway Postgres service |
+| `PGDATABASE` | Reference from the Railway Postgres service |
+| `PGUSER` | Reference from the Railway Postgres service |
+| `PGPASSWORD` | Reference from the Railway Postgres service |
 
-Attaching a Postgres plugin often injects the `PG*` variables for you. Do not commit any of these values. Do not set `SPRING_PROFILES_ACTIVE=prod` in CircleCI: the tests are written to stay on H2 and do not need a database.
+`PGPASSWORD` and the other `PG*` values are referenced from the Postgres service. Do not commit them. If `ALLOWED_ORIGINS` is unset, the app allows `http://localhost:5173` only, so the Railway service needs the Netlify origin. The prod profile turns the H2 console off. Do not set `SPRING_PROFILES_ACTIVE=prod` in CircleCI: the tests stay on H2 and do not need a database.
