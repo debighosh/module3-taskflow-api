@@ -9,3 +9,4 @@ target/
 *.ipr
 .vscode/
 .DS_Store
+reports/
