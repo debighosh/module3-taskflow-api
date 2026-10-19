@@ -1,0 +1,336 @@
+# TaskFlow CI: test, scan dependencies, build the image, scan the image,
+# and publish to Docker Hub from main (and from vMAJOR.MINOR.PATCH tags).
+#
+# Other branches and pull requests run the same jobs but do not push.
+# Tests use the in-memory H2 database. Do not set SPRING_PROFILES_ACTIVE=prod
+# and do not start Postgres here.
+#
+# Scan findings are uploaded as artifacts and do not fail the build.
+# The dependency-check job does not gate the Docker Hub publish.
+#
+# Without NVD_API_KEY, OWASP Dependency-Check 13.0.0 is skipped. That release
+# exits 13 when the key is missing (empty nvd.api.key; upstream issue 8715).
+# Trivy rootfs still scans the runtime jars and needs no key.
+# With a non-empty NVD_API_KEY, Dependency-Check runs as well.
+#
+# Required on main / release tags (CircleCI project env vars or a context):
+#   DOCKERHUB_USERNAME
+#   DOCKERHUB_TOKEN
+# Optional:
+#   NVD_API_KEY
+
+version: 2.1
+
+executors:
+  java:
+    docker:
+      - image: cimg/openjdk:21.0
+
+commands:
+  restore-maven-cache:
+    steps:
+      - restore_cache:
+          name: Restore Maven dependencies
+          keys:
+            - maven-v1-{{ checksum "pom.xml" }}
+            - maven-runtime-v1-{{ checksum "pom.xml" }}
+            - maven-v1-
+
+  save-maven-cache:
+    steps:
+      - save_cache:
+          name: Save Maven dependencies
+          key: maven-v1-{{ checksum "pom.xml" }}
+          paths:
+            - ~/.m2/repository
+          when: always
+
+  install-trivy:
+    steps:
+      - run:
+          name: Install Trivy
+          command: |
+            set -euo pipefail
+            TRIVY_VERSION=0.76.0
+            mkdir -p "${HOME}/bin"
+            curl -fsSL -o /tmp/trivy.tar.gz \
+              "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+            tar -xzf /tmp/trivy.tar.gz -C "${HOME}/bin" trivy
+            trivy --version
+
+jobs:
+  test:
+    executor: java
+    steps:
+      - checkout
+      - restore-maven-cache
+      - run:
+          name: Run unit tests
+          command: |
+            set -euo pipefail
+            # Default profile only. Production Postgres settings stay on Railway.
+            unset SPRING_PROFILES_ACTIVE || true
+            mvn -B test
+      - save-maven-cache
+      - store_test_results:
+          path: target/surefire-reports
+      - store_artifacts:
+          path: target/surefire-reports
+          destination: surefire-reports
+          when: always
+
+  dependency-check:
+    executor: java
+    steps:
+      - checkout
+      - restore-maven-cache
+      - restore_cache:
+          name: Restore OWASP Dependency-Check data
+          keys:
+            - odc-data-v1-
+      - run:
+          name: Copy runtime dependencies
+          command: |
+            set -euo pipefail
+            mvn -B -DskipTests dependency:copy-dependencies \
+              -DoutputDirectory=target/dependency \
+              -DincludeScope=runtime
+      - save_cache:
+          name: Save runtime Maven dependencies
+          key: maven-runtime-v1-{{ checksum "pom.xml" }}
+          paths:
+            - ~/.m2/repository
+          when: always
+      - restore_cache:
+          name: Restore Trivy vulnerability database
+          keys:
+            - trivy-db-v1-
+      - install-trivy
+      - run:
+          name: Scan runtime jars with Trivy
+          no_output_timeout: 20m
+          command: |
+            set -euo pipefail
+            mkdir -p reports/dependency-check "${HOME}/.cache/trivy"
+            export TRIVY_CACHE_DIR="${HOME}/.cache/trivy"
+            # trivy fs does not open JARs. rootfs does, and it uses Trivy's own
+            # vulnerability database, so no NVD API key is required.
+            trivy rootfs \
+              --scanners vuln \
+              --exit-code 0 \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --format table \
+              target/dependency | tee reports/dependency-check/trivy-dependencies.txt
+            trivy rootfs \
+              --scanners vuln \
+              --exit-code 0 \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --format json \
+              --output reports/dependency-check/trivy-dependencies.json \
+              target/dependency
+            echo "Trivy jar findings are saved as artifacts. They do not fail this job."
+      - save_cache:
+          name: Save Trivy vulnerability database
+          key: trivy-db-v1-{{ epoch }}
+          paths:
+            - ~/.cache/trivy
+      - run:
+          name: Run OWASP Dependency-Check when NVD_API_KEY is set
+          no_output_timeout: 40m
+          command: |
+            set -euo pipefail
+            mkdir -p reports/dependency-check "${HOME}/odc-data"
+            NVD_KEY="$(printf '%s' "${NVD_API_KEY:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -z "${NVD_KEY}" ]; then
+              unset NVD_API_KEY || true
+              printf '%s\n' \
+                "OWASP Dependency-Check was not run." \
+                "NVD_API_KEY is unset or blank." \
+                "Dependency-Check 13.0.0 exits 13 in that case: NvdApiException: Invalid API Key, length of 0 too short, then 'Unable to continue dependency-check analysis' because no NVD documents exist." \
+                "The CLI ships with an empty nvd.api.key. See https://github.com/dependency-check/DependencyCheck/issues/8715 . The fix is merged and is not in the 13.0.0 release, which is still the latest release." \
+                "This job already scanned target/dependency with Trivy. Read trivy-dependencies.txt." \
+                "Set a non-empty NVD_API_KEY in CircleCI Project Settings and the next build will run Dependency-Check as well. Findings do not fail the build." \
+                > reports/dependency-check/SKIPPED.txt
+              cat reports/dependency-check/SKIPPED.txt
+              exit 0
+            fi
+            DC_VERSION=13.0.0
+            curl -fsSL -o /tmp/dependency-check.zip \
+              "https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip"
+            rm -rf "${HOME}/dependency-check"
+            unzip -q /tmp/dependency-check.zip -d "${HOME}"
+            "${HOME}/dependency-check/bin/dependency-check.sh" \
+              --project "taskflow-api" \
+              --scan target/dependency \
+              --format HTML \
+              --format JSON \
+              --out reports/dependency-check \
+              --data "${HOME}/odc-data" \
+              --prettyPrint \
+              --failOnCVSS 11 \
+              --nvdValidForHours 168 \
+              --nvdApiKey "${NVD_KEY}"
+            echo "Dependency-Check findings are in the HTML report. They do not fail this job."
+      - store_artifacts:
+          path: reports/dependency-check
+          destination: dependency-check
+          when: always
+      # The NVD database can be large. If this upload is rejected, the reports
+      # above are already stored; delete this step rather than treating a cache
+      # miss as a failed scan.
+      - save_cache:
+          name: Save OWASP Dependency-Check data
+          key: odc-data-v1-{{ epoch }}
+          paths:
+            - ~/odc-data
+
+  docker-image:
+    executor: java
+    steps:
+      - checkout
+      - run:
+          name: Resolve image version
+          command: |
+            set -euo pipefail
+            if [[ "${CIRCLE_TAG:-}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              echo "Git tag ${CIRCLE_TAG} sets the image version to ${VERSION}."
+              if [ -f VERSION ]; then
+                FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+                if [ "${FILE_VERSION}" != "${VERSION}" ]; then
+                  echo "Warning: VERSION file says ${FILE_VERSION}. The git tag wins for this build."
+                fi
+              fi
+            else
+              if [ ! -f VERSION ]; then
+                echo "VERSION file not found. Use MAJOR.MINOR.PATCH, for example 1.0.0."
+                exit 1
+              fi
+              VERSION="$(tr -d '[:space:]' < VERSION)"
+              echo "VERSION file sets the image version to ${VERSION}."
+            fi
+            if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Invalid version '${VERSION}'. Use MAJOR.MINOR.PATCH, for example 1.0.0."
+              exit 1
+            fi
+            SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+            IMAGE_NAME="${DOCKERHUB_USERNAME:-debighosh}/taskflow-api"
+            mkdir -p reports
+            printf 'version=%s\nsha=sha-%s\nlatest=pushed only when CIRCLE_BRANCH=main\nimage=%s\n' \
+              "${VERSION}" "${SHORT_SHA}" "${IMAGE_NAME}" | tee reports/image-tags.txt
+            {
+              echo "export VERSION=$(printf '%q' "${VERSION}")"
+              echo "export SHORT_SHA=$(printf '%q' "${SHORT_SHA}")"
+            } >> "${BASH_ENV}"
+      - setup_remote_docker
+      - run:
+          name: Build the image
+          command: |
+            set -euo pipefail
+            if [ -n "${DOCKERHUB_USERNAME:-}" ] || [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+                echo "Set both DOCKERHUB_USERNAME and DOCKERHUB_TOKEN, or leave both unset."
+                exit 1
+              fi
+              echo "${DOCKERHUB_TOKEN}" | docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
+            fi
+            docker build \
+              --build-arg "APP_VERSION=${VERSION}" \
+              --tag "taskflow-api:ci-${SHORT_SHA}" \
+              .
+      - restore_cache:
+          name: Restore Trivy vulnerability database
+          keys:
+            - trivy-db-v1-
+      - install-trivy
+      - run:
+          name: Scan the image with Trivy
+          command: |
+            set -euo pipefail
+            mkdir -p reports "${HOME}/.cache/trivy"
+            export TRIVY_CACHE_DIR="${HOME}/.cache/trivy"
+            LOCAL="taskflow-api:ci-${SHORT_SHA}"
+            trivy image \
+              --exit-code 0 \
+              --format table \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              "${LOCAL}" | tee reports/trivy-image.txt
+            trivy image \
+              --exit-code 0 \
+              --format json \
+              --output reports/trivy-image.json \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              "${LOCAL}"
+            echo "Trivy findings are saved as artifacts. They do not fail this job."
+      - save_cache:
+          name: Save Trivy vulnerability database
+          key: trivy-db-v1-{{ epoch }}
+          paths:
+            - ~/.cache/trivy
+      - store_artifacts:
+          path: reports
+          destination: image
+          when: always
+      - run:
+          name: Publish version, commit SHA, and latest
+          command: |
+            set -euo pipefail
+            publish=false
+            if [ "${CIRCLE_BRANCH:-}" = "main" ]; then
+              publish=true
+            fi
+            if [[ "${CIRCLE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              publish=true
+            fi
+            if [ "${publish}" != "true" ]; then
+              echo "Not a main-branch push or vMAJOR.MINOR.PATCH tag. Image was built and scanned, not pushed."
+              exit 0
+            fi
+            if [ -z "${DOCKERHUB_USERNAME:-}" ] || [ -z "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must be set before this branch can publish."
+              echo "Add them under CircleCI Project Settings → Environment Variables."
+              exit 1
+            fi
+            IMAGE="${DOCKERHUB_USERNAME}/taskflow-api"
+            LOCAL="taskflow-api:ci-${SHORT_SHA}"
+            echo "${DOCKERHUB_TOKEN}" | docker login --username "${DOCKERHUB_USERNAME}" --password-stdin
+            docker tag "${LOCAL}" "${IMAGE}:${VERSION}"
+            docker tag "${LOCAL}" "${IMAGE}:sha-${SHORT_SHA}"
+            docker push "${IMAGE}:${VERSION}"
+            docker push "${IMAGE}:sha-${SHORT_SHA}"
+            if [ "${CIRCLE_BRANCH:-}" = "main" ]; then
+              docker tag "${LOCAL}" "${IMAGE}:latest"
+              docker push "${IMAGE}:latest"
+              echo "Pushed ${IMAGE}:${VERSION}, ${IMAGE}:sha-${SHORT_SHA}, and ${IMAGE}:latest"
+            else
+              echo "Pushed ${IMAGE}:${VERSION} and ${IMAGE}:sha-${SHORT_SHA}"
+              echo "latest was not moved, because this run was not a push to main."
+            fi
+
+workflows:
+  # Pushes to every branch, including main. Tags are ignored here so a tag
+  # push does not run this workflow and the release workflow at the same time.
+  ci:
+    jobs:
+      - test
+      # Does not gate docker-image. A skipped or failed scan still leaves publish free to run.
+      - dependency-check
+      - docker-image:
+          requires:
+            - test
+
+  # git push origin v1.2.3 — version comes from the tag, latest is not moved.
+  release:
+    jobs:
+      - test:
+          filters: &release-filters
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+      - dependency-check:
+          filters: *release-filters
+      - docker-image:
+          requires:
+            - test
+          filters: *release-filters
