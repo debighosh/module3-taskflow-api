@@ -4,7 +4,7 @@ Docker image, CircleCI pipeline, and Railway notes for Module 4. Stretch goals c
 
 - a pipeline that tests, builds, and publishes the image to Docker Hub on every push to `main`
 - semver and commit-SHA image tags, with `latest` kept on the newest main build
-- OWASP Dependency-Check plus a Trivy image scan, with the reports stored as CI artifacts
+- a dependency scan in CI, with reports stored as artifacts: Trivy on the runtime jars, and OWASP Dependency-Check when an NVD API key is set, plus a Trivy image scan
 
 `README.md` is left for the submission write-up. Use this file to run the tools, then summarise the pipeline URL, Docker Hub tags, and scan results in the README.
 
@@ -63,7 +63,7 @@ The previous semver tag stays on Docker Hub. `latest` and the new semver tag poi
 Use this order so Docker Hub keeps two versions and the scan artifacts are a before/after pair for stretch goal 5.
 
 1. Add the CircleCI Docker Hub variables before anything is merged to `main`.
-2. Merge [PR #1](https://github.com/debighosh/module3-taskflow-api/pull/1) first. That `main` push publishes `1.0.0`, `sha-<commit>`, and `latest` from Spring Boot 3.2.2. Download the Dependency-Check HTML report and `trivy-image.txt` from that run. Those artifacts are the baseline scan.
+2. Merge [PR #1](https://github.com/debighosh/module3-taskflow-api/pull/1) first. That `main` push publishes `1.0.0`, `sha-<commit>`, and `latest` from Spring Boot 3.2.2. Download `trivy-dependencies.txt` from the `dependency-check` job and `trivy-image.txt` from the `docker-image` job. If `NVD_API_KEY` is set, also download the Dependency-Check HTML report. Those artifacts are the baseline scan.
 3. Update [PR #2](https://github.com/debighosh/module3-taskflow-api/pull/2) with `main`, set `VERSION` to `1.1.0` on that branch, then merge it. PR #2 upgrades Spring Boot to 3.5.16. That `main` push publishes `1.1.0`, `sha-<commit>`, and `latest`.
 4. Compare the `1.1.0` scan artifacts with the `1.0.0` artifacts in the submission README.
 
@@ -92,10 +92,10 @@ The config is `.circleci/config.yml`. Two workflows share the same jobs:
 Each workflow runs:
 
 1. `test` — `mvn test` on H2. No database service is started.
-2. `dependency-check` — OWASP Dependency-Check CLI 13.0.0, in parallel with the tests. This does not add a plugin to `pom.xml`.
+2. `dependency-check` — in parallel with the tests. Copies the runtime jars and scans them with Trivy 0.76.0. If `NVD_API_KEY` is set, it also runs OWASP Dependency-Check CLI 13.0.0. No plugin is added to `pom.xml`.
 3. `docker-image` — after tests pass, build the image, scan it with Trivy 0.76.0, and publish only from `main` or a release tag.
 
-`dependency-check` does not block the image. A slow NVD download will not hold up the Docker Hub push. If that job fails, the workflow is still marked failed, so fix or rerun it before you treat the pipeline as green.
+`docker-image` waits only for `test`. A skipped or failed dependency scan does not block the Docker Hub publish.
 
 ### What you have to do in CircleCI
 
@@ -107,7 +107,7 @@ Each workflow runs:
    | --- | --- |
    | `DOCKERHUB_USERNAME` | `debighosh` |
    | `DOCKERHUB_TOKEN` | Docker Hub access token (below) |
-   | `NVD_API_KEY` | Optional. NVD API key. |
+   | `NVD_API_KEY` | Optional. Leave it unset until you have a key. A blank value is treated as unset. |
 
    These are injected into the jobs. They are not in the repository. A CircleCI context works too: create the context, add the same variables, then add `context: <name>` to the `test`, `dependency-check`, and `docker-image` jobs. The config does not name a context, so a missing context cannot fail the pipeline. Project environment variables are enough.
 
@@ -122,19 +122,33 @@ Create the Docker Hub token:
 3. Create a token with Read and Write access (public repositories are enough for `debighosh/taskflow-api`).
 4. Copy the token once into the CircleCI variable `DOCKERHUB_TOKEN`. Do not commit it, and do not put it in Railway.
 
-Request an NVD key from [nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key). Dependency-Check calls the NVD API. Without a key the first run is rate-limited and can take a long time. The key is optional. The NVD data directory is cached between CircleCI runs for 7 days (`--nvdValidForHours 168`). Maven dependencies and the Trivy databases are cached as well. The first Trivy run also downloads a large Java vulnerability database; later runs reuse the cache. If the NVD cache upload fails because the database is large for the CircleCI plan, the HTML report is still an artifact. Remove the "Save OWASP Dependency-Check data" step and rerun; the scan itself does not depend on that cache.
+`NVD_API_KEY` is optional. Leave it unset until the NVD request site gives you a key. Do not add the variable with an empty value. A blank value is treated the same as unset.
+
+Without a key, Dependency-Check 13.0.0 is skipped and the job stays green. That release exits 13 when the key is missing: `NvdApiException: Invalid API Key, length of 0 too short`, then "Unable to continue dependency-check analysis" because no NVD documents were downloaded. The CLI ships with an empty `nvd.api.key` ([dependency-check issue 8715](https://github.com/dependency-check/DependencyCheck/issues/8715)). The fix is merged and is not in 13.0.0, which is still the latest release. The job writes `SKIPPED.txt`. The dependency findings for the README are in `trivy-dependencies.txt`.
+
+When you add a non-empty `NVD_API_KEY` (request one from [nvd.nist.gov/developers/request-an-api-key](https://nvd.nist.gov/developers/request-an-api-key)), the same job runs Dependency-Check on the next build. It passes the key with `--nvdApiKey` and `--failOnCVSS 11`, and uploads the HTML and JSON reports. The NVD data directory is cached for 7 days (`--nvdValidForHours 168`). If that cache upload is too large for the CircleCI plan, the reports are already stored. Remove the "Save OWASP Dependency-Check data" step.
+
+Trivy does not call the NVD API. The first run downloads Trivy's vulnerability database and its Java index. Later runs reuse the cache. Maven dependencies are cached as well.
 
 ### Scans
 
 Findings do not fail the build. The README has to summarise them, and a newly published CVE in Alpine or a transitive dependency should not block the coursework publish.
 
-- Dependency-Check runs with `--failOnCVSS 11`. CVSS scores stop at 10, so the exit code stays successful when vulnerabilities are found. The HTML and JSON reports are artifacts on the `dependency-check` job.
-- Trivy runs with `--exit-code 0` and writes `trivy-image.txt` and `trivy-image.json` on the `docker-image` job.
-- If the CLI cannot be downloaded, or the NVD update fails, that job fails. That is a broken scan, not a finding.
+Without `NVD_API_KEY`:
 
-The dependency scan covers runtime-scoped jars (`compile` and `runtime`) copied with `mvn dependency:copy-dependencies`. It does not scan test-only jars. Trivy scans the image that is actually published, including Alpine packages and the application JAR.
+- The `dependency-check` job copies runtime jars (`compile` and `runtime`, not test-only jars) and scans that directory with `trivy rootfs`. `trivy fs` does not open JARs. Reports are `trivy-dependencies.txt` and `trivy-dependencies.json`.
+- `SKIPPED.txt` on that job explains why Dependency-Check did not run.
+- The `docker-image` job writes `trivy-image.txt` and `trivy-image.json` for the built image, including Alpine packages and the application JAR.
 
-Open the job in CircleCI and use the **Artifacts** tab. For the README, summarise the Dependency-Check HTML report and `trivy-image.txt`: what was found, what you changed, and what you left (for example an Alpine package CVE that would require leaving the base image from the assignment).
+With `NVD_API_KEY`:
+
+- The same Trivy reports are produced.
+- Dependency-Check also runs with `--failOnCVSS 11` and writes `dependency-check-report.html` and `dependency-check-report.json`. CVSS scores stop at 10, so findings keep a successful exit code.
+- If the NVD download fails, or the key is rejected, the `dependency-check` job fails. The Trivy jar report is still uploaded. The Docker Hub publish does not wait on this job.
+
+Every Trivy command uses `--exit-code 0`, so findings do not fail the job. If the Trivy binary or its database cannot be downloaded, that step fails.
+
+Open the job in CircleCI and use the **Artifacts** tab. For the README, summarise `trivy-dependencies.txt` and `trivy-image.txt`. When the key is set, also summarise the Dependency-Check HTML report: what was found, what you changed, and what you left (for example an Alpine package CVE that would require leaving the base image from the assignment).
 
 To fail the build later, lower `--failOnCVSS` or drop `--exit-code 0` and pass `--severity HIGH,CRITICAL --exit-code 1` to Trivy.
 

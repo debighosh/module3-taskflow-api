@@ -6,12 +6,17 @@
 # and do not start Postgres here.
 #
 # Scan findings are uploaded as artifacts and do not fail the build.
-# A scanner that cannot run (failed download, NVD outage) still fails its job.
+# The dependency-check job does not gate the Docker Hub publish.
+#
+# Without NVD_API_KEY, OWASP Dependency-Check 13.0.0 is skipped. That release
+# exits 13 when the key is missing (empty nvd.api.key; upstream issue 8715).
+# Trivy rootfs still scans the runtime jars and needs no key.
+# With a non-empty NVD_API_KEY, Dependency-Check runs as well.
 #
 # Required on main / release tags (CircleCI project env vars or a context):
 #   DOCKERHUB_USERNAME
 #   DOCKERHUB_TOKEN
-# Optional, strongly recommended:
+# Optional:
 #   NVD_API_KEY
 
 version: 2.1
@@ -39,6 +44,19 @@ commands:
           paths:
             - ~/.m2/repository
           when: always
+
+  install-trivy:
+    steps:
+      - run:
+          name: Install Trivy
+          command: |
+            set -euo pipefail
+            TRIVY_VERSION=0.76.0
+            mkdir -p "${HOME}/bin"
+            curl -fsSL -o /tmp/trivy.tar.gz \
+              "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+            tar -xzf /tmp/trivy.tar.gz -C "${HOME}/bin" trivy
+            trivy --version
 
 jobs:
   test:
@@ -83,48 +101,82 @@ jobs:
           paths:
             - ~/.m2/repository
           when: always
+      - restore_cache:
+          name: Restore Trivy vulnerability database
+          keys:
+            - trivy-db-v1-
+      - install-trivy
       - run:
-          name: Install OWASP Dependency-Check CLI
+          name: Scan runtime jars with Trivy
+          no_output_timeout: 20m
           command: |
             set -euo pipefail
+            mkdir -p reports/dependency-check "${HOME}/.cache/trivy"
+            export TRIVY_CACHE_DIR="${HOME}/.cache/trivy"
+            # trivy fs does not open JARs. rootfs does, and it uses Trivy's own
+            # vulnerability database, so no NVD API key is required.
+            trivy rootfs \
+              --scanners vuln \
+              --exit-code 0 \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --format table \
+              target/dependency | tee reports/dependency-check/trivy-dependencies.txt
+            trivy rootfs \
+              --scanners vuln \
+              --exit-code 0 \
+              --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+              --format json \
+              --output reports/dependency-check/trivy-dependencies.json \
+              target/dependency
+            echo "Trivy jar findings are saved as artifacts. They do not fail this job."
+      - save_cache:
+          name: Save Trivy vulnerability database
+          key: trivy-db-v1-{{ epoch }}
+          paths:
+            - ~/.cache/trivy
+      - run:
+          name: Run OWASP Dependency-Check when NVD_API_KEY is set
+          no_output_timeout: 40m
+          command: |
+            set -euo pipefail
+            mkdir -p reports/dependency-check "${HOME}/odc-data"
+            NVD_KEY="$(printf '%s' "${NVD_API_KEY:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -z "${NVD_KEY}" ]; then
+              unset NVD_API_KEY || true
+              printf '%s\n' \
+                "OWASP Dependency-Check was not run." \
+                "NVD_API_KEY is unset or blank." \
+                "Dependency-Check 13.0.0 exits 13 in that case: NvdApiException: Invalid API Key, length of 0 too short, then 'Unable to continue dependency-check analysis' because no NVD documents exist." \
+                "The CLI ships with an empty nvd.api.key. See https://github.com/dependency-check/DependencyCheck/issues/8715 . The fix is merged and is not in the 13.0.0 release, which is still the latest release." \
+                "This job already scanned target/dependency with Trivy. Read trivy-dependencies.txt." \
+                "Set a non-empty NVD_API_KEY in CircleCI Project Settings and the next build will run Dependency-Check as well. Findings do not fail the build." \
+                > reports/dependency-check/SKIPPED.txt
+              cat reports/dependency-check/SKIPPED.txt
+              exit 0
+            fi
             DC_VERSION=13.0.0
             curl -fsSL -o /tmp/dependency-check.zip \
               "https://github.com/dependency-check/DependencyCheck/releases/download/v${DC_VERSION}/dependency-check-${DC_VERSION}-release.zip"
             rm -rf "${HOME}/dependency-check"
             unzip -q /tmp/dependency-check.zip -d "${HOME}"
-      - run:
-          name: Scan dependencies and keep the report
-          no_output_timeout: 40m
-          command: |
-            set -euo pipefail
-            mkdir -p reports/dependency-check "${HOME}/odc-data"
-            cmd=(
-              "${HOME}/dependency-check/bin/dependency-check.sh"
-              --project "taskflow-api"
-              --scan target/dependency
-              --format HTML
-              --format JSON
-              --out reports/dependency-check
-              --data "${HOME}/odc-data"
-              --prettyPrint
-              --failOnCVSS 11
-              --nvdValidForHours 168
-            )
-            if [ -n "${NVD_API_KEY:-}" ]; then
-              cmd+=(--nvdApiKey "${NVD_API_KEY}")
-              echo "Using NVD_API_KEY from the environment."
-            else
-              echo "NVD_API_KEY is not set. The NVD download is rate-limited."
-              echo "The first run can take a long time. Add the key in CircleCI to speed this up."
-            fi
-            "${cmd[@]}"
-            echo "Findings are in the dependency-check artifact. They do not fail this job."
+            "${HOME}/dependency-check/bin/dependency-check.sh" \
+              --project "taskflow-api" \
+              --scan target/dependency \
+              --format HTML \
+              --format JSON \
+              --out reports/dependency-check \
+              --data "${HOME}/odc-data" \
+              --prettyPrint \
+              --failOnCVSS 11 \
+              --nvdValidForHours 168 \
+              --nvdApiKey "${NVD_KEY}"
+            echo "Dependency-Check findings are in the HTML report. They do not fail this job."
       - store_artifacts:
           path: reports/dependency-check
           destination: dependency-check
           when: always
-      # The NVD database can be large. If this upload is rejected, the report
-      # above is already stored; delete this step rather than treating a cache
+      # The NVD database can be large. If this upload is rejected, the reports
+      # above are already stored; delete this step rather than treating a cache
       # miss as a failed scan.
       - save_cache:
           name: Save OWASP Dependency-Check data
@@ -190,15 +242,12 @@ jobs:
           name: Restore Trivy vulnerability database
           keys:
             - trivy-db-v1-
+      - install-trivy
       - run:
           name: Scan the image with Trivy
           command: |
             set -euo pipefail
-            TRIVY_VERSION=0.76.0
-            mkdir -p "${HOME}/bin" reports
-            curl -fsSL -o /tmp/trivy.tar.gz \
-              "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-            tar -xzf /tmp/trivy.tar.gz -C "${HOME}/bin" trivy
+            mkdir -p reports "${HOME}/.cache/trivy"
             export TRIVY_CACHE_DIR="${HOME}/.cache/trivy"
             LOCAL="taskflow-api:ci-${SHORT_SHA}"
             trivy image \
@@ -264,6 +313,7 @@ workflows:
   ci:
     jobs:
       - test
+      # Does not gate docker-image. A skipped or failed scan still leaves publish free to run.
       - dependency-check
       - docker-image:
           requires:
