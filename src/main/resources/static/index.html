@@ -35,9 +35,9 @@
                             <div class="mb-3">
                                 <label for="priority" class="form-label fw-semibold">Priority</label>
                                 <select class="form-select" id="priority">
-                                    <option value="LOW">LOW</option>
-                                    <option value="MEDIUM" selected>MEDIUM</option>
-                                    <option value="HIGH">HIGH</option>
+                                    <option value="low">Low</option>
+                                    <option value="medium" selected>Medium</option>
+                                    <option value="high">High</option>
                                 </select>
                             </div>
                             <div class="mb-3">
@@ -45,10 +45,11 @@
                                 <input type="date" class="form-control" id="dueDate">
                             </div>
                             <div class="mb-3">
-                                <label for="completed" class="form-label fw-semibold">Completed</label>
-                                <select class="form-select" id="completed">
-                                    <option value="false" selected>False</option>
-                                    <option value="true">True</option>
+                                <label for="status" class="form-label fw-semibold">Status</label>
+                                <select class="form-select" id="status">
+                                    <option value="todo" selected>To Do</option>
+                                    <option value="in-progress">In Progress</option>
+                                    <option value="done">Done</option>
                                 </select>
                             </div>
                             <button type="submit" class="btn btn-primary w-100 py-2">Add Task</button>
@@ -92,7 +93,7 @@
                     <p><strong>Description:</strong> <span id="modalDescription"></span></p>
                     <p><strong>Priority:</strong> <span id="modalPriority" class="badge"></span></p>
                     <p><strong>Due Date:</strong> <span id="modalDueDate"></span></p>
-                    <p><strong>Completed:</strong> <span id="modalCompleted"></span></p>
+                    <p><strong>Status:</strong> <span id="modalStatus"></span></p>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
@@ -115,7 +116,7 @@
                     <p><strong>Description:</strong> <span id="createdModalDescription"></span></p>
                     <p><strong>Priority:</strong> <span id="createdModalPriority" class="badge"></span></p>
                     <p><strong>Due Date:</strong> <span id="createdModalDueDate"></span></p>
-                    <p><strong>Completed:</strong> <span id="createdModalCompleted"></span></p>
+                    <p><strong>Status:</strong> <span id="createdModalStatus"></span></p>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
@@ -162,8 +163,8 @@
             taskListDiv.innerHTML = '';
             tasks.forEach(task => {
                 let badgeColor = 'bg-secondary';
-                if (task.priority === 'HIGH') badgeColor = 'bg-danger';
-                else if (task.priority === 'MEDIUM') badgeColor = 'bg-warning text-dark';
+                if (task.priority === 'high') badgeColor = 'bg-danger';
+                else if (task.priority === 'medium') badgeColor = 'bg-warning text-dark';
 
                 const item = document.createElement('a');
                 item.href = '#';
@@ -176,7 +177,7 @@
                         <small class="badge ${badgeColor}">${task.priority || 'NORMAL'}</small>
                     </div>
                     <p class="mb-1 text-secondary text-truncate" style="max-width: 500px;">${task.description || 'No description provided'}</p>
-                    <small class="text-muted">Due: ${task.dueDate || 'None'} &bull; Completed: ${task.completed ? 'True' : 'False'} &bull; Click to view details via API</small>
+                    <small class="text-muted">Due: ${task.dueDate || 'None'} &bull; Status: ${task.status || 'todo'} &bull; Click to view details via API</small>
                 `;
                 taskListDiv.appendChild(item);
             });
@@ -203,10 +204,10 @@
                 
                 const priorityBadge = document.getElementById('modalPriority');
                 priorityBadge.innerText = task.priority || 'NORMAL';
-                priorityBadge.className = 'badge ' + (task.priority === 'HIGH' ? 'bg-danger' : task.priority === 'MEDIUM' ? 'bg-warning text-dark' : 'bg-secondary');
+                priorityBadge.className = 'badge ' + (task.priority === 'high' ? 'bg-danger' : task.priority === 'medium' ? 'bg-warning text-dark' : 'bg-secondary');
 
                 document.getElementById('modalDueDate').innerText = task.dueDate || 'None';
-                document.getElementById('modalCompleted').innerText = task.completed ? 'True' : 'False';
+                document.getElementById('modalStatus').innerText = task.status || 'todo';
 
                 // Show Bootstrap Modal
                 const modal = new bootstrap.Modal(document.getElementById('taskDetailModal'));
@@ -225,7 +226,7 @@
                 description: document.getElementById('description').value,
                 priority: document.getElementById('priority').value,
                 dueDate: document.getElementById('dueDate').value || null,
-                completed: document.getElementById('completed').value === 'true'
+                status: document.getElementById('status').value
             };
 
             try {
@@ -244,10 +245,10 @@
 
                     const createdPriorityBadge = document.getElementById('createdModalPriority');
                     createdPriorityBadge.innerText = createdTask.priority || 'NORMAL';
-                    createdPriorityBadge.className = 'badge ' + (createdTask.priority === 'HIGH' ? 'bg-danger' : createdTask.priority === 'MEDIUM' ? 'bg-warning text-dark' : 'bg-secondary');
+                    createdPriorityBadge.className = 'badge ' + (createdTask.priority === 'high' ? 'bg-danger' : createdTask.priority === 'medium' ? 'bg-warning text-dark' : 'bg-secondary');
 
                     document.getElementById('createdModalDueDate').innerText = createdTask.dueDate || 'None';
-                    document.getElementById('createdModalCompleted').innerText = createdTask.completed ? 'True' : 'False';
+                    document.getElementById('createdModalStatus').innerText = createdTask.status || 'todo';
 
                     document.getElementById('taskForm').reset();
                     loadTasks(); // Refresh list automatically

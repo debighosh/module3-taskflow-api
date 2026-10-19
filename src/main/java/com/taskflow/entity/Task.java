@@ -11,20 +11,23 @@ import java.time.LocalDate;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Task {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
     @Column(nullable = false)
     private String title;
-    
+
     private String description;
-    
-    private String priority;
-    
-    private LocalDate dueDate;
-    
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private Boolean completed = false;
+    private TaskStatus status = TaskStatus.TODO;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TaskPriority priority = TaskPriority.MEDIUM;
+
+    private LocalDate dueDate;
 }
