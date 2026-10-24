@@ -75,23 +75,257 @@ Docker Hub tags: https://hub.docker.com/r/debighosh/taskflow-api/tags
 
 ## Application
 
-<!-- LINUS:APP-SECTION
-Replace the placeholder below. Keep this comment until the section is written.
-Add:
-- API endpoints with sample requests
-- H2 (default) profile versus the prod profile
-- CORS and frontend notes
-- How to run the tests
--->
+`TaskController` serves `/api/tasks`. There is no other resource. Deployed variable values, the Netlify origin, and the preflight check are under [Railway and Netlify](#railway-and-netlify). Local Docker commands are under [Run the image locally](#run-the-image-locally).
 
-**Placeholder for Linus.** This section is empty on purpose. Add it on this pull request:
+### Task JSON
 
-- API endpoints, with sample requests
-- how the default H2 profile differs from the `prod` profile
-- CORS and frontend notes
-- how to run the tests
+```json
+{
+  "id": 2,
+  "title": "Draft the API contract",
+  "description": "Agree the task JSON fields and the list, create, update, and delete endpoints.",
+  "status": "in-progress",
+  "priority": "high",
+  "dueDate": "2026-10-24"
+}
+```
 
-Deployed variable values, the Netlify origin, and the preflight check are under [Railway and Netlify](#railway-and-netlify). Local Docker commands are under [Run the image locally](#run-the-image-locally).
+| Field | JSON | Required | Notes |
+| --- | --- | --- | --- |
+| `id` | number | Generated | The database assigns it. A client-supplied `id` on create or update is ignored. |
+| `title` | string | Yes | Trimmed. A missing, empty, or blank title returns HTTP 400. |
+| `description` | string or null | No | On update, the stored description is replaced with the value in the body. Omitting it clears the stored description. |
+| `status` | string | No on input | One of `todo`, `in-progress`, `done`. Omitted or null on create becomes `todo`. Omitted or null on update leaves the stored status. |
+| `priority` | string | No on input | One of `low`, `medium`, `high`. Omitted or null on create becomes `medium`. Omitted or null on update leaves the stored priority. |
+| `dueDate` | `yyyy-MM-dd` or null | No | On update, a non-null value replaces the stored date. Omitting it, or sending null, leaves the stored date as it is. |
+
+There is no `completed` field. Status carries that meaning.
+
+Jackson accepts and returns the lowercase strings above. The columns store the enum names `TODO`, `IN_PROGRESS`, `DONE`, `LOW`, `MEDIUM`, and `HIGH`. Sending an enum name such as `"TODO"` is rejected.
+
+### Endpoints
+
+| Method | Path | Success | Failure |
+| --- | --- | --- | --- |
+| `GET` | `/api/tasks` | 200, JSON array. Empty array when the table is empty. | |
+| `GET` | `/api/tasks/{id}` | 200, one task | 404 when the id is missing |
+| `POST` | `/api/tasks` | 201, the saved task, including the generated `id` | 400 when the title is blank, or when `status` or `priority` is not one of the values above |
+| `PUT` | `/api/tasks/{id}` | 200, the updated task | 404 when the id is missing. 400 for a blank title or a bad `status` or `priority`. |
+| `DELETE` | `/api/tasks/{id}` | 204, empty body | 404 when the id is missing |
+
+`GET /api/tasks` has no query parameters. The page bundled with the API filters titles in the browser after it has loaded the full list.
+
+### Error body
+
+A rejected request uses Spring Boot's default JSON: `timestamp`, `status`, `error`, and `path`. The app does not set `server.error.include-message`, so the reason text is not in the body. The service still raises `Title is required` (400) and `Task not found with id: …` (404).
+
+```json
+{
+  "timestamp": "2026-10-24T03:39:18.439+00:00",
+  "status": 404,
+  "error": "Not Found",
+  "path": "/api/tasks/999999"
+}
+```
+
+A blank title, or a status outside `todo`, `in-progress`, and `done`, is the same shape with `"status": 400` and `"error": "Bad Request"`.
+
+### Sample requests (bash)
+
+Use this block in bash, Git Bash, or WSL. In Windows PowerShell, `curl` is an alias of `Invoke-WebRequest`, and a single-quoted JSON body does not survive the paste. PowerShell samples are in the next section.
+
+Mutating examples use localhost so a pasted `DELETE` does not remove a task on the deployed database. The production origin is in [Live application](#live-application). Substitute `ID` with the `id` returned by the create call.
+
+```bash
+BASE="http://localhost:8080"
+
+curl -sS -w "\nHTTP %{http_code}\n" "$BASE/api/tasks"
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST "$BASE/api/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Write endpoint documentation","description":"Document each REST endpoint.","status":"todo","priority":"low","dueDate":"2026-11-01"}'
+
+curl -sS -w "\nHTTP %{http_code}\n" "$BASE/api/tasks/ID"
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X PUT "$BASE/api/tasks/ID" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Write endpoint documentation","description":"Examples are in the README.","status":"done","priority":"medium","dueDate":"2026-11-01"}'
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X DELETE "$BASE/api/tasks/ID"
+
+curl -sS -w "\nHTTP %{http_code}\n" \
+  -X POST "$BASE/api/tasks" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"   ","status":"todo","priority":"low"}'
+
+curl -sS -w "\nHTTP %{http_code}\n" "$BASE/api/tasks/999999"
+```
+
+After `ID` is replaced with the created task's id, the status codes are 200, 201, 200, 200, 204, 400, and 404.
+
+### Sample requests (PowerShell)
+
+`Invoke-RestMethod` prints the JSON object. A 204 delete prints nothing. Windows PowerShell raises on 400 and 404, so the last two calls are wrapped.
+
+```powershell
+$Base = "http://localhost:8080"
+
+Invoke-RestMethod -Uri "$Base/api/tasks" -Method Get
+
+$createBody = @'
+{
+  "title": "Write endpoint documentation",
+  "description": "Document each REST endpoint.",
+  "status": "todo",
+  "priority": "low",
+  "dueDate": "2026-11-01"
+}
+'@
+
+$created = Invoke-RestMethod -Uri "$Base/api/tasks" -Method Post -ContentType "application/json" -Body $createBody
+$created
+
+Invoke-RestMethod -Uri "$Base/api/tasks/$($created.id)" -Method Get
+
+$updateBody = @'
+{
+  "title": "Write endpoint documentation",
+  "description": "Examples are in the README.",
+  "status": "done",
+  "priority": "medium",
+  "dueDate": "2026-11-01"
+}
+'@
+
+Invoke-RestMethod -Uri "$Base/api/tasks/$($created.id)" -Method Put -ContentType "application/json" -Body $updateBody
+
+Invoke-RestMethod -Uri "$Base/api/tasks/$($created.id)" -Method Delete
+
+$badTitle = '{"title":"   ","status":"todo","priority":"low"}'
+try {
+  Invoke-RestMethod -Uri "$Base/api/tasks" -Method Post -ContentType "application/json" -Body $badTitle
+} catch {
+  $_.Exception.Message
+}
+
+try {
+  Invoke-RestMethod -Uri "$Base/api/tasks/999999" -Method Get
+} catch {
+  $_.Exception.Message
+}
+```
+
+### Spring profiles
+
+The default profile is for local development and tests. `application.properties` is always loaded. `SPRING_PROFILES_ACTIVE=prod` also loads `application-prod.properties`. The values set on Railway are under [Railway and Netlify](#railway-and-netlify).
+
+#### Default profile (H2)
+
+| Setting | Value |
+| --- | --- |
+| JDBC URL | `jdbc:h2:mem:taskflowdb` |
+| Driver | `org.h2.Driver` |
+| User | `sa` |
+| Password | empty |
+| DDL | `update` |
+| SQL logging | on |
+| H2 console | enabled at `/h2-console` |
+| Port | `PORT` when it is set, otherwise 8080 |
+
+The database is in memory, so it is empty every time the process starts. `TaskDataSeeder` inserts six tasks when the `tasks` table has no rows. Stopping the app clears them. The next start inserts them again.
+
+| Title | Status | Priority | Due date |
+| --- | --- | --- | --- |
+| Set up the project repository | `done` | `high` | 2026-10-20 |
+| Draft the API contract | `in-progress` | `high` | 2026-10-24 |
+| Design the task board layout | `in-progress` | `medium` | 2026-10-28 |
+| Write endpoint documentation | `todo` | `low` | null |
+| Add email reminders | `todo` | `medium` | 2026-11-05 |
+| Support drag and drop ordering | `todo` | `low` | null |
+
+`mvn test` uses this profile. The tests do not start Postgres and they do not set `SPRING_PROFILES_ACTIVE`.
+
+#### Prod profile (Postgres)
+
+`application-prod.properties` builds the JDBC URL from the Postgres plugin variables:
+
+```properties
+spring.datasource.url=jdbc:postgresql://${PGHOST}:${PGPORT}/${PGDATABASE}
+spring.datasource.username=${PGUSER}
+spring.datasource.password=${PGPASSWORD}
+spring.datasource.driverClassName=org.postgresql.Driver
+```
+
+The names are `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD`. SQL logging is off. The H2 console is off. `ddl-auto` stays `update`.
+
+The same seeder runs in prod and inserts the six tasks only when the table is empty. Postgres keeps its rows, so a restart does not insert them again.
+
+No Hibernate dialect is hard-coded. Hibernate selects H2 in the default profile and PostgreSQL in prod.
+
+### CORS
+
+`CorsConfig` allows browser calls to `/api/**`. The origin list is the environment variable `ALLOWED_ORIGINS` (case-sensitive), exposed as `app.cors.allowed-origins`. The value is comma-separated. Each entry is trimmed, and empty entries are dropped.
+
+Allowed methods are `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS`. Allowed headers are `*`. Browsers send an `OPTIONS` preflight before a cross-origin `PUT` or `DELETE`.
+
+When `ALLOWED_ORIGINS` is unset, the only allowed origin is `http://localhost:5173` (the Vite dev server). The value must match the browser `Origin` header: scheme, host, and port, with no path and no trailing slash. The origin set on Railway, and the live preflight result, are under [Railway and Netlify](#railway-and-netlify).
+
+The page at `http://localhost:8080` is same-origin, so it does not use this list.
+
+### Frontend wiring
+
+The React app is the separate repository linked under [Live application](#live-application). `VITE_API_URL` is set on Netlify at build time. Vite inlines it into the static bundle. Set it to the API origin only, with no `/api` suffix. The value used for the current Netlify build is under [Railway and Netlify](#railway-and-netlify).
+
+The client calls `/api/tasks` on that origin (`GET`, `POST`, `PUT`, and `DELETE`). Changing the variable requires a new Netlify build. An empty value in the client falls back to `http://localhost:8080`.
+
+### Environment variables
+
+No secret values belong in this repository. Examples below are public origins or reference names, not passwords or tokens. Where a service is already configured, the running value is in [Railway and Netlify](#railway-and-netlify) or [CI/CD pipeline](#cicd-pipeline).
+
+| Name | Purpose | Example | Where it is set |
+| --- | --- | --- | --- |
+| `SPRING_PROFILES_ACTIVE` | Loads `application-prod.properties` | `prod` | Railway API service |
+| `ALLOWED_ORIGINS` | Comma-separated browser origins for `/api/**`. Case-sensitive name. | `https://module4-task-manager.netlify.app` | Railway API service |
+| `PGHOST` | Postgres host. Used in the JDBC URL. | `${{Postgres.PGHOST}}` | Railway API service |
+| `PGPORT` | Postgres port | `${{Postgres.PGPORT}}` | Railway API service |
+| `PGDATABASE` | Database name | `${{Postgres.PGDATABASE}}` | Railway API service |
+| `PGUSER` | Database user | `${{Postgres.PGUSER}}` | Railway API service |
+| `PGPASSWORD` | Database password | `${{Postgres.PGPASSWORD}}`. Secret. | Railway API service |
+| `PORT` | HTTP port. Unset means 8080. | Set by Railway | Railway API service |
+| `VITE_API_URL` | API origin baked into the React build. No `/api` suffix. | `https://module3-taskflow-api-production-d562.up.railway.app` | Netlify, build environment |
+| `DOCKERHUB_USERNAME` | Namespace for the published image | `debighosh` | CircleCI project environment |
+| `DOCKERHUB_TOKEN` | Docker Hub access token used to push | Stored only in CircleCI | CircleCI project environment |
+| `NVD_API_KEY` | Optional. A blank or unset value skips OWASP Dependency-Check. | Unset, or a key stored only in CircleCI | CircleCI project environment |
+| `APP_VERSION` | Docker build argument. Recorded as an OCI image label. Omitted means `unversioned`. | `1.1.0` | `docker build --build-arg`, and CircleCI |
+
+`APP_VERSION` is a build argument, not a Spring property. Local H2 credentials (`sa` and an empty password) are in `application.properties`. They are not environment variables.
+
+### Running locally and tests
+
+JDK 21 and Maven 3.6 or later. From the repository root:
+
+```bash
+java -version
+mvn -version
+mvn spring-boot:run
+```
+
+The API listens at http://localhost:8080. On a fresh start, `GET http://localhost:8080/api/tasks` returns the six seed tasks. The H2 console is at http://localhost:8080/h2-console (`jdbc:h2:mem:taskflowdb`, user `sa`, empty password).
+
+Tests:
+
+```bash
+mvn test
+```
+
+CircleCI runs the same suite as `mvn -B test`. It covers list, get, create, update, delete, a missing id (404), a blank title (400), and a CORS preflight from `http://localhost:5173`.
+
+http://localhost:8080 also serves `src/main/resources/static/index.html` (Bootstrap 5). That page can create a task, reload the list, filter titles in the browser, and open one task with `GET /api/tasks/{id}`. It does not call `PUT` or `DELETE`.
+
+Docker build and run commands are under [Run the image locally](#run-the-image-locally). A local container uses this default profile. It does not need `SPRING_PROFILES_ACTIVE` or Postgres.
 
 ## Run the image locally
 
