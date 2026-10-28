@@ -1,6 +1,6 @@
 # TaskFlow DevOps
 
-Docker image, CircleCI pipeline, and Railway notes for Module 4. Stretch goals covered here:
+Docker image, CircleCI pipeline, and Railway notes for Module 4 Assignment. Stretch goals are covered here:
 
 - a pipeline that tests, builds, and publishes the image to Docker Hub on every push to `main`
 - semver and commit-SHA image tags, with `latest` kept on the newest main build
@@ -60,7 +60,7 @@ The previous semver tag stays on Docker Hub. `latest` and the new semver tag poi
 
 ### Recommended release order
 
-Use this order so Docker Hub keeps two versions and the scan artifacts are a before/after pair for stretch goal 5.
+The following order was used so Docker Hub keeps two versions and the scan artifacts are a before/after pair for stretch goal 5.
 
 1. Add the CircleCI Docker Hub variables before anything is merged to `main`.
 2. Merge [PR #1](https://github.com/debighosh/module3-taskflow-api/pull/1) first. That `main` push publishes `1.0.0`, `sha-<commit>`, and `latest` from Spring Boot 3.2.2. Download `trivy-dependencies.txt` from the `dependency-check` job and `trivy-image.txt` from the `docker-image` job. If `NVD_API_KEY` is set, also download the Dependency-Check HTML report. Those artifacts are the baseline scan.
@@ -97,7 +97,7 @@ Each workflow runs:
 
 `docker-image` waits only for `test`. A skipped or failed dependency scan does not block the Docker Hub publish.
 
-### What you have to do in CircleCI
+### What I had to do in CircleCI
 
 1. Sign in at [circleci.com](https://circleci.com) with the GitHub account that owns `debighosh/module3-taskflow-api`.
 2. Create or select the project for this repository. CircleCI reads `.circleci/config.yml`.
@@ -122,7 +122,7 @@ Create the Docker Hub token:
 3. Create a token with Read and Write access (public repositories are enough for `debighosh/taskflow-api`).
 4. Copy the token once into the CircleCI variable `DOCKERHUB_TOKEN`. Do not commit it, and do not put it in Railway.
 
-`NVD_API_KEY` is optional. Leave it unset until the NVD request site gives you a key. Do not add the variable with an empty value. A blank value is treated the same as unset.
+`NVD_API_KEY` is optional. I was having trouble getting the key as the site was overloaded for a couple of days. So I decide to leave it unset until the NVD request site gave me a key. I did not add the variable with an empty value as I found out that a blank value is treated the same as unset.
 
 Without a key, Dependency-Check 13.0.0 is skipped and the job stays green. That release exits 13 when the key is missing: `NvdApiException: Invalid API Key, length of 0 too short`, then "Unable to continue dependency-check analysis" because no NVD documents were downloaded. The CLI ships with an empty `nvd.api.key` ([dependency-check issue 8715](https://github.com/dependency-check/DependencyCheck/issues/8715)). The fix is merged and is not in 13.0.0, which is still the latest release. The job writes `SKIPPED.txt`. The dependency findings for the README are in `trivy-dependencies.txt`.
 
@@ -179,4 +179,4 @@ Local Docker and CI stay on the default profile and H2. Production settings belo
 | `PGUSER` | Reference from the Railway Postgres service |
 | `PGPASSWORD` | Reference from the Railway Postgres service |
 
-`PGPASSWORD` and the other `PG*` values are referenced from the Postgres service. Do not commit them. If `ALLOWED_ORIGINS` is unset, the app allows `http://localhost:5173` only, so the Railway service needs the Netlify origin. The prod profile turns the H2 console off. Do not set `SPRING_PROFILES_ACTIVE=prod` in CircleCI: the tests stay on H2 and do not need a database.
+`PGPASSWORD` and the other `PG*` values are referenced from the Postgres service. I did not commit them. If `ALLOWED_ORIGINS` is unset, the app allows `http://localhost:5173` only, so the Railway service needs the Netlify origin. The prod profile turns the H2 console off. Do not set `SPRING_PROFILES_ACTIVE=prod` in CircleCI: the tests stay on H2 and do not need a database.
