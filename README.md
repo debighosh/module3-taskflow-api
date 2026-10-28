@@ -19,7 +19,7 @@ Checked on 24 October 2026:
 
 - `GET /api/tasks` returned **200** and a JSON array. The body had eight tasks. Ids 1–6 are the six tasks the API inserts when the table is empty. Ids 8 and 9 (`Deployed from Railway`, `Testing the Task creation 24-Oct-2026`) were created afterwards. Postgres keeps those rows across restarts.
 - An `OPTIONS` preflight from `Origin: https://module4-task-manager.netlify.app` returned **200** with `access-control-allow-origin: https://module4-task-manager.netlify.app` and `access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS`.
-- CRUD from the Netlify site was confirmed in the browser. The screenshot of that page is still to be added ([checklist](#screenshots-still-to-add)).
+- CRUD from the Netlify site was confirmed in the browser. The page is shown in [docs/screenshots/netlify-app.png](docs/screenshots/netlify-app.png).
 
 ## Architecture
 
@@ -414,6 +414,8 @@ Method:
 - Image: `trivy image` on `debighosh/taskflow-api:1.0.0` and `:1.1.0`, severities `UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL`. Trivy prints one total per target. The default image scan also runs the secret scanner: **0 secrets** in either image.
 - Runtime jars: exported `/app/app.jar`, unpacked `BOOT-INF/lib`, then `trivy rootfs --scanners vuln` on that directory. `trivy fs` does not open JARs. This matches the CI `dependency-check` job, which scans Maven runtime jars the same way.
 
+The full raw Trivy dependency report is [docs/screenshots/trivy-dependencies.txt](docs/screenshots/trivy-dependencies.txt).
+
 The Java totals from `trivy image` and from `trivy rootfs` are the same. Alpine packages appear only in the image scan. Both images are Alpine 3.24.2, and the Alpine totals match.
 
 ### Before / after
@@ -508,8 +510,6 @@ The merge commit `4263e0d815b7` contains `1.1.0`. Docker Hub still has both dige
 
 ## Screenshots
 
-DG will add these files under `docs/screenshots/`. Until then the images below do not resolve. No placeholder binaries are in the repository.
-
 ![Railway services](docs/screenshots/railway-services.png)
 
 Railway project: API service and Postgres service, with the API deployment active.
@@ -541,14 +541,3 @@ https://module4-task-manager.netlify.app in the browser, showing tasks loaded fr
 ![Trivy before and after](docs/screenshots/trivy-before-after.png)
 
 Trivy output for `1.0.0` and `1.1.0` (image scan or the runtime-jar scan). The counts are in [Before / after](#before--after).
-
-## Screenshots still to add
-
-- [ ] `docs/screenshots/railway-services.png` — Railway dashboard, API and Postgres, deployment active
-- [ ] `docs/screenshots/railway-deploy-logs.png` — successful Railway build log
-- [ ] `docs/screenshots/curl-get.png` — live `GET /api/tasks` returning 200
-- [ ] `docs/screenshots/curl-post.png` — live `POST /api/tasks`
-- [ ] `docs/screenshots/circleci-pipeline.png` — green CircleCI workflow on `main`
-- [ ] `docs/screenshots/dockerhub-tags.png` — Docker Hub tags, including `1.0.0`, `1.1.0`, and `latest`
-- [ ] `docs/screenshots/netlify-app.png` — Netlify frontend showing API data
-- [ ] `docs/screenshots/trivy-before-after.png` — Trivy before/after for 1.0.0 and 1.1.0
