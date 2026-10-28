@@ -379,7 +379,7 @@ Tags on Docker Hub, read from the public registry on 24 October 2026:
 | `1.0.0`, `sha-fb1313e1d721` | `fb1313e1d721` ([PR #1](https://github.com/debighosh/module3-taskflow-api/pull/1)) | `1.0.0` | Spring Boot 3.2.2. Runtime jar `spring-boot-3.2.2.jar`, Tomcat 10.1.18, Jackson 2.15.3. 56 jars under `BOOT-INF/lib`. | 2026-10-19 06:27 | `sha256:c46f194ce944b73e64c41901017ae15345715cfd78ce276726051c43213799ff` |
 | `1.1.0`, `sha-4263e0d815b7`, `latest` | `4263e0d815b7` ([PR #2](https://github.com/debighosh/module3-taskflow-api/pull/2)) | `1.1.0` | Spring Boot 3.5.16. Runtime jar `spring-boot-3.5.16.jar`, Tomcat 10.1.55, Jackson 2.21.4, PostgreSQL driver 42.7.11. 57 jars under `BOOT-INF/lib`. | 2026-10-19 08:10 | `sha256:b161a48a07fff1e5e052f5106a985b85e87f3e7f31feaab7b7656bb0be0cad7d` |
 
-`latest` and `sha-4263e0d815b7` are the same digest as `1.1.0`. `1.0.0` was left on the Spring Boot 3.2.2 image. See [error 5](#5-version-bump-before-the-1-1-0-merge).
+The digests in the table are the original release builds, and `1.0.0` is still that Spring Boot 3.2.2 image ([error 5](#5-version-bump-before-the-1-1-0-merge)). Later docs-only pushes to `main` rebuild the image from the same source and re-push `1.1.0` and `latest` (the overwrite behaviour in [Versioning](docs/DEVOPS.md#versioning)), so those two tags now point at a newer digest, while `sha-4263e0d815b7` remains the immutable pointer to the original `1.1.0` build.
 
 ## Railway and Netlify
 
